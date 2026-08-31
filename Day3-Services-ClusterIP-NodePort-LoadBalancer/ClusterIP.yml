@@ -28,7 +28,7 @@ spec:
   # In this case, Pods with label "app: my-app" will receive traffic
   selector:
     # Label selector: matches Pods with this exact label
-    app: my-app
+    app: my-app-np
 
 # How ClusterIP Works in Detail:
 # 1. When you create a ClusterIP Service, Kubernetes assigns it a virtual IP address from the cluster's internal IP range
