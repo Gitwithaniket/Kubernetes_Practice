@@ -1,187 +1,429 @@
 terraform {
-  required_version = ">= 1.5.0"
-
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 6.0"
+      version = "~> 5.0"
     }
   }
 }
-
-# ============================================================
-# AWS PROVIDER
-# ============================================================
 
 provider "aws" {
   region = "us-east-1"
 }
 
-# ============================================================
-# AVAILABLE AVAILABILITY ZONES
-# ============================================================
+############################
+# VARIABLES
+############################
 
-data "aws_availability_zones" "available" {
-  state = "available"
+variable "cluster_version" {
+  default = "1.35"
 }
 
-# ============================================================
+############################
 # VPC
-# ============================================================
+############################
 
-module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 6.0"
+resource "aws_vpc" "eks_vpc" {
 
-  name = "kubernetes-practice-vpc"
-
-  cidr = "10.0.0.0/16"
-
-  azs = slice(
-    data.aws_availability_zones.available.names,
-    0,
-    3
-  )
-
-  # ==========================================================
-  # PRIVATE SUBNETS
-  # ==========================================================
-
-  private_subnets = [
-    "10.0.1.0/24",
-    "10.0.2.0/24",
-    "10.0.3.0/24"
-  ]
-
-  # ==========================================================
-  # PUBLIC SUBNETS
-  # ==========================================================
-
-  public_subnets = [
-    "10.0.101.0/24",
-    "10.0.102.0/24",
-    "10.0.103.0/24"
-  ]
-
-  # ==========================================================
-  # NAT GATEWAY
-  # ==========================================================
-
-  enable_nat_gateway = true
-  single_nat_gateway = true
-
-  # ==========================================================
-  # DNS
-  # ==========================================================
-
-  enable_dns_hostnames = true
+  cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
+  enable_dns_hostnames = true
 
   tags = {
-    Name        = "kubernetes-practice-vpc"
-    Environment = "dev"
-    Terraform   = "true"
+    Name = "eks-vpc"
   }
 }
 
-# ============================================================
+resource "aws_internet_gateway" "igw" {
+
+  vpc_id = aws_vpc.eks_vpc.id
+}
+
+############################
+# SUBNETS
+############################
+
+resource "aws_subnet" "public1" {
+
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "us-east-1a"
+  map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "public2" {
+
+  vpc_id                  = aws_vpc.eks_vpc.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "us-east-1b"
+  map_public_ip_on_launch = true
+}
+
+resource "aws_subnet" "private1" {
+
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = "10.0.3.0/24"
+  availability_zone = "us-east-1a"
+}
+
+resource "aws_subnet" "private2" {
+
+  vpc_id            = aws_vpc.eks_vpc.id
+  cidr_block        = "10.0.4.0/24"
+  availability_zone = "us-east-1b"
+}
+
+############################
+# NAT GATEWAY
+############################
+
+resource "aws_eip" "nat" {
+  domain = "vpc"
+}
+
+resource "aws_nat_gateway" "nat" {
+
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public1.id
+}
+
+############################
+# ROUTE TABLES
+############################
+
+resource "aws_route_table" "public" {
+
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
+}
+
+resource "aws_route_table_association" "pub1" {
+
+  subnet_id      = aws_subnet.public1.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "pub2" {
+
+  subnet_id      = aws_subnet.public2.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table" "private" {
+
+  vpc_id = aws_vpc.eks_vpc.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
+}
+
+resource "aws_route_table_association" "priv1" {
+
+  subnet_id      = aws_subnet.private1.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_route_table_association" "priv2" {
+
+  subnet_id      = aws_subnet.private2.id
+  route_table_id = aws_route_table.private.id
+}
+
+resource "aws_security_group" "allow_all" {
+
+  name        = "allow-all-sg"
+  description = "Allow all inbound and outbound traffic"
+  vpc_id      = aws_vpc.eks_vpc.id
+
+  ingress {
+
+    description = "Allow all inbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+
+    description = "Allow all outbound"
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = {
+    Name = "allow-all-sg"
+  }
+}
+############################
+# IAM ROLE - CLUSTER
+############################
+
+resource "aws_iam_role" "cluster_role" {
+
+  name = "eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "cluster_policy" {
+
+  role       = aws_iam_role.cluster_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+}
+
+############################
+# IAM ROLE - NODE GROUP
+############################
+
+resource "aws_iam_role" "worker_role" {
+
+  name = "eks-worker-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "worker_node" {
+
+  role       = aws_iam_role.worker_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+}
+
+resource "aws_iam_role_policy_attachment" "cni" {
+
+  role       = aws_iam_role.worker_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+}
+
+resource "aws_iam_role_policy_attachment" "ecr" {
+
+  role       = aws_iam_role.worker_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+}
+
+############################
 # EKS CLUSTER
-# ============================================================
+############################
 
-module "eks" {
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.0"
+resource "aws_eks_cluster" "eks" {
 
-  # ==========================================================
-  # CLUSTER
-  # ==========================================================
+  name     = "naresh"
+  role_arn = aws_iam_role.cluster_role.arn
+  version  = var.cluster_version
 
-  name               = "kubernetes-practice"
-  kubernetes_version = "1.34"
+  vpc_config {
 
-  # ==========================================================
-  # NETWORKING
-  # ==========================================================
+    subnet_ids = [
+      aws_subnet.private1.id,
+      aws_subnet.private2.id
+    ]
 
-  vpc_id = module.vpc.vpc_id
-
-  subnet_ids = module.vpc.private_subnets
-
-  # ==========================================================
-  # API ENDPOINT
-  # ==========================================================
-
-  endpoint_public_access = true
-
-  # ==========================================================
-  # ADMIN ACCESS
-  # ==========================================================
-
-  enable_cluster_creator_admin_permissions = true
-
-  # ==========================================================
-  # MANAGED NODE GROUP
-  # ==========================================================
-
-  eks_managed_node_groups = {
-    kubernetes_nodes = {
-      name = "k8s-nodes"
-
-      instance_types = ["t3.small"]
-
-      min_size     = 1
-      desired_size = 2
-      max_size     = 3
-    }
+    endpoint_public_access = true
   }
 
+  depends_on = [
+    aws_iam_role_policy_attachment.cluster_policy
+  ]
+}
 
-  # ==========================================================
-  # EKS TAGS
-  # ==========================================================
+############################
+# NODE GROUP
+############################
 
+resource "aws_eks_node_group" "node_group" {
+
+  cluster_name    = aws_eks_cluster.eks.name
+  node_group_name = "eks-node-group"
+
+  node_role_arn = aws_iam_role.worker_role.arn
+  version       = var.cluster_version
+
+  subnet_ids = [
+    aws_subnet.private1.id,
+    aws_subnet.private2.id
+  ]
+  
+    
+  instance_types = ["t2.medium"]
+
+  scaling_config {
+
+    desired_size = 6
+    max_size     = 8
+    min_size     = 4
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.worker_node,
+    aws_iam_role_policy_attachment.cni,
+    aws_iam_role_policy_attachment.ecr
+  ]
   tags = {
+    Name        = "eks-node"
     Environment = "dev"
-    Terraform   = "true"
-    Project     = "Kubernetes-Practice"
+    Project     = "eks-project"
+    Owner       = "veeraops"
   }
 }
 
-# ============================================================
-# OUTPUTS
-# ============================================================
 
-output "cluster_name" {
-  description = "EKS Cluster Name"
-  value       = module.eks.cluster_name
+resource "aws_instance" "eks" {
+    ami           = "ami-02dfbd4ff395f2a1b"
+    instance_type = "t2.medium"
+    subnet_id     = aws_subnet.public1.id
+    vpc_security_group_ids = [aws_security_group.allow_all.id]
+    root_block_device {
+      volume_size = "30"
+    }
+   
+    
+    tags = {
+        Name = "eks"
+    }
+    
+    user_data = <<-EOF
+                #!/bin/bash
+                # Update system
+                yum update -y
+
+                # ----------------------------- Install kubectl -----------------------------
+                curl -o /tmp/kubectl https://amazon-eks.s3.us-west-2.amazonaws.com/1.19.6/2021-01-05/bin/linux/amd64/kubectl
+                chmod +x /tmp/kubectl
+                mv /tmp/kubectl /usr/local/bin/kubectl
+
+                # Verify kubectl
+                kubectl version --client || true
+
+                # ----------------------------- Install eksctl -------------------------------
+                curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" \
+                | tar xz -C /tmp
+
+                mv /tmp/eksctl /usr/local/bin/eksctl
+
+                # Verify eksctl
+                eksctl version || true
+
+                EOF
+  
+}
+############################
+# EKS ADDONS
+############################
+
+resource "aws_eks_addon" "vpc_cni" {
+
+  cluster_name = aws_eks_cluster.eks.name
+  addon_name   = "vpc-cni"
+
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.node_group]
 }
 
-output "cluster_endpoint" {
-  description = "EKS Cluster Endpoint"
-  value       = module.eks.cluster_endpoint
+resource "aws_eks_addon" "coredns" {
+
+  cluster_name = aws_eks_cluster.eks.name
+  addon_name   = "coredns"
+
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.node_group]
 }
 
-output "cluster_status" {
-  description = "EKS Cluster Status"
-  value       = module.eks.cluster_status
+resource "aws_eks_addon" "kube_proxy" {
+
+  cluster_name = aws_eks_cluster.eks.name
+  addon_name   = "kube-proxy"
+
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.node_group]
 }
 
-output "cluster_version" {
-  description = "EKS Kubernetes Version"
-  value       = module.eks.cluster_version
+resource "aws_eks_addon" "pod_identity" {
+
+  cluster_name = aws_eks_cluster.eks.name
+  addon_name   = "eks-pod-identity-agent"
+
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.node_group]
 }
 
-output "vpc_id" {
-  description = "VPC ID"
-  value       = module.vpc.vpc_id
+
+resource "aws_iam_role" "ebs_csi_role" {
+
+  name = "AmazonEKS_EBS_CSI_DriverRole"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "pods.eks.amazonaws.com"
+      }
+      Action = [
+        "sts:AssumeRole",            
+        "sts:TagSession"
+      ]
+    }]
+  })
 }
 
-output "private_subnets" {
-  description = "Private Subnet IDs"
-  value       = module.vpc.private_subnets
+resource "aws_iam_role_policy_attachment" "ebs_csi_policy" {
+
+  role       = aws_iam_role.ebs_csi_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
 }
 
-output "public_subnets" {
-  description = "Public Subnet IDs"
-  value       = module.vpc.public_subnets
+resource "aws_eks_pod_identity_association" "ebs_csi" {
+  cluster_name    = aws_eks_cluster.eks.name
+  namespace       = "kube-system"
+  service_account = "ebs-csi-controller-sa"
+
+  role_arn = aws_iam_role.ebs_csi_role.arn
+
+  depends_on = [
+    aws_iam_role_policy_attachment.ebs_csi_policy
+  ]
+}
+
+resource "aws_eks_addon" "ebs_csi" {
+
+  cluster_name = aws_eks_cluster.eks.name
+  addon_name   = "aws-ebs-csi-driver"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_node_group.node_group,
+    aws_eks_pod_identity_association.ebs_csi
+  ]
 }

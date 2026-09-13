@@ -1,0 +1,21 @@
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Terraform local files
+.terraformrc
+terraform.rc
+
+echo ".terraform/" >> .gitignore
+echo "*.tfstate" >> .gitignore
+echo "*.tfstate.*" >> .gitignore
+echo ".terraform.lock.hcl" >> .gitignore
