@@ -235,7 +235,7 @@ resource "aws_iam_role_policy_attachment" "ecr" {
 
 resource "aws_eks_cluster" "eks" {
 
-  name     = "naresh"
+  name     = "EKS_Cluster"
   role_arn = aws_iam_role.cluster_role.arn
   version  = var.cluster_version
 
@@ -272,13 +272,13 @@ resource "aws_eks_node_group" "node_group" {
   ]
   
     
-  instance_types = ["t2.medium"]
+  instance_types = ["t3.small"]
 
   scaling_config {
 
-    desired_size = 6
-    max_size     = 8
-    min_size     = 4
+    desired_size = 2
+    max_size     = 2
+    min_size     = 2
   }
 
   depends_on = [
@@ -297,7 +297,7 @@ resource "aws_eks_node_group" "node_group" {
 
 resource "aws_instance" "eks" {
     ami           = "ami-02dfbd4ff395f2a1b"
-    instance_type = "t2.medium"
+    instance_type = "t3.small"
     subnet_id     = aws_subnet.public1.id
     vpc_security_group_ids = [aws_security_group.allow_all.id]
     root_block_device {
