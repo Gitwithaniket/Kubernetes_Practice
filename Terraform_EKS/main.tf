@@ -235,7 +235,7 @@ resource "aws_iam_role_policy_attachment" "ecr" {
 
 resource "aws_eks_cluster" "eks" {
 
-  name     = "EKS_Cluster"
+  name     = "aniket-eks"
   role_arn = aws_iam_role.cluster_role.arn
   version  = var.cluster_version
 
@@ -261,7 +261,7 @@ resource "aws_eks_cluster" "eks" {
 resource "aws_eks_node_group" "node_group" {
 
   cluster_name    = aws_eks_cluster.eks.name
-  node_group_name = "eks-node-group"
+  node_group_name = "aniket-eks-node-group"
 
   node_role_arn = aws_iam_role.worker_role.arn
   version       = var.cluster_version
